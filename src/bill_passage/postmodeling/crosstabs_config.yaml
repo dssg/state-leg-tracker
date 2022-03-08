@@ -1,0 +1,135 @@
+output:
+  schema: 'test_results'
+  table: 'crosstabs'
+
+thresholds:
+  rank_abs: [100] # not being used
+  rank_pct: [10] # not being used
+  score_bins:
+    'will_not_pass': [0, 0.10]
+    'unlikely': [0.10, 0.35]
+    'coin-toss': [0.35, 0.55]
+    'likely': [0.55, 0.70]
+    'very_likely': [0.70, 0.90]
+    'will_pass': [0.90, 1.0]
+
+
+model_ids:
+  - 16465
+  - 16592
+  - 16722
+  - 16850
+
+project_path: s3://aclu-leg-tracker/experiment_data/bill_passage/triage/national_lt
+
+
+## The old config that is not in use anymore
+
+#(optional): a list of entity_ids to subset on the crosstabs analysis
+# But a required item (you need at least an empty list)
+# entity_id_list: []
+
+# # models_list_query: "select unnest(ARRAY[11784]) :: int as model_id"
+# models_list_query: "select unnest(ARRAY[16465, 16592, 16722, 16850]) :: int as model_id"
+
+
+
+# # as_of_dates_query: "select distinct as_of_date from test_results.predictions where model_id=11784"
+# as_of_dates_query: "select distinct as_of_date from test_results.predictions where model_id in (16465, 16592, 16722, 16850)"
+
+# models_dates_join_query: "
+#     select 
+#       model_id,
+#       as_of_date
+#     from models_list_query m
+#     cross join as_of_dates_query a join (select distinct model_id, as_of_date from test_results.predictions) p
+#     using (model_id, as_of_date)"
+
+# features_query: |
+#     select 
+#       *
+#     from features.bl_sp_aggregation_imputed join 
+#     features.sp_success_aggregation_imputed using (entity_id, as_of_date) join
+#     features.bl_stat_aggregation_imputed using (entity_id, as_of_date) join   
+#     features.chmbr_aggregation_imputed using (entity_id, as_of_date) join 
+#     features.evnt_cts_aggregation_imputed using (entity_id, as_of_date) join 
+#     features.rec_evnts_aggregation_imputed using (entity_id, as_of_date) join 
+#     features.sess_aggregation_imputed using (entity_id, as_of_date) join 
+#     features.rec_txt_aggregation_imputed using (entity_id, as_of_date) join
+#     models_dates_join_query m using(as_of_date)
+
+# features_query: |
+#   select 
+#     m.model_id, 
+#     entity_id,
+#     as_of_date,
+#     f2.sponsors_entity_id_all_dems_frac_max,
+#     f2.sponsors_entity_id_all_other_frac_max,
+#     f2.sponsors_entity_id_all_reps_frac_max,
+#     f2.sponsors_entity_id_all_total_sponsors_max,
+#     f3."events_entity_id_1month_DISTINCT chamber_count",
+#     f3.events_entity_id_1month_action_count,
+#     f3.events_entity_id_1month_days_since_last_event_min,
+#     f3."events_entity_id_1week_DISTINCT chamber_count",
+#     f3.events_entity_id_1week_action_count,
+#     f3.events_entity_id_1week_days_since_last_event_min,
+#     f3."events_entity_id_2week_DISTINCT chamber_count",
+#     f3.events_entity_id_2week_action_count,
+#     f3.events_entity_id_2week_days_since_last_event_min,
+#     f3."events_entity_id_all_DISTINCT chamber_count",
+#     f3.events_entity_id_all_action_count,
+#     f3.events_entity_id_all_days_since_last_event_min,
+#     f4.billinfo_entity_id_all_bill_age_max,
+#     f5.chamber_makeup_entity_id_all_d_hou_ctrl_max,
+#     f5.chamber_makeup_entity_id_all_d_sen_ctrl_max,
+#     f5.chamber_makeup_entity_id_all_hou_size_max,
+#     f5.chamber_makeup_entity_id_all_othr_hou_ctrl_max,
+#     f5.chamber_makeup_entity_id_all_othr_sen_ctrl_max,
+#     f5.chamber_makeup_entity_id_all_r_hou_ctrl_max,
+#     f5.chamber_makeup_entity_id_all_r_sen_ctrl_max,
+#     f5.chamber_makeup_entity_id_all_sen_size_max,
+#     f6.rec_evnts_entity_id_all_days_since_evnt_min,
+#     f7.txt_entity_id_1month_doc_id_count,
+#     f7.txt_entity_id_1month_num_amended_texts_sum,
+#     f7.txt_entity_id_1month_text_size_max,
+#     f7.txt_entity_id_1month_text_size_min,
+#     f7.txt_entity_id_1week_doc_id_count,
+#     f7.txt_entity_id_1week_num_amended_texts_sum,
+#     f7.txt_entity_id_1week_text_size_max,
+#     f7.txt_entity_id_1week_text_size_min,
+#     f7.txt_entity_id_2week_doc_id_count,
+#     f7.txt_entity_id_2week_num_amended_texts_sum,
+#     f7.txt_entity_id_2week_text_size_max,
+#     f7.txt_entity_id_2week_text_size_min,
+#     f7.txt_entity_id_all_doc_id_count,
+#     f7.txt_entity_id_all_num_amended_texts_sum,
+#     f7.txt_entity_id_all_text_size_max,
+#     f7.txt_entity_id_all_text_size_min,
+#     f8.rec_txt_entity_id_all_days_since_amendment_min,
+#     f8.rec_txt_entity_id_all_days_since_last_version_min,
+#     f9.session_info_entity_id_all_remaining_time_min,
+#     f9.session_info_entity_id_all_session_len_min
+#   from features.sponsors_aggregation_imputed f2 join
+#       features.events_aggregation_imputed f3 using (entity_id, as_of_date) join
+#         features.billinfo_aggregation_imputed f4 using (entity_id, as_of_date) join
+#           features.chamber_makeup_aggregation_imputed f5 using (entity_id, as_of_date) join
+#             features.rec_evnts_aggregation_imputed f6 using (entity_id, as_of_date) join
+#               features.txt_aggregation_imputed f7 using (entity_id, as_of_date) join
+#                 features.rec_txt_aggregation_imputed f8 using (entity_id, as_of_date) join
+#                   features.session_info_aggregation_imputed f9 using (entity_id, as_of_date) join
+#                     models_dates_join_query m using(as_of_date)
+
+# predictions_query: "
+#   SELECT 
+#     model_id,
+#     entity_id,
+#     as_of_date,
+#     score,
+#     label_value,
+#     coalesce(rank_abs_no_ties, row_number() over (partition by (model_id, as_of_date) order by score desc)) as rank_abs,
+#     coalesce(rank_pct_no_ties*100, ntile(100) over (partition by (model_id, as_of_date) order by score desc)) as rank_pct
+#     from test_results.predictions
+#   JOIN models_dates_join_query USING(model_id, as_of_date)
+#   where model_id IN (select model_id from models_list_query)
+#   AND as_of_date in (select as_of_date from as_of_dates_query)"
+

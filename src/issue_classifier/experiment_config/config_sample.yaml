@@ -1,0 +1,56 @@
+model_comment: ''
+
+temporal_config:
+    'feature_start_time': ''
+    'feature_end_time': ''
+    'label_start_time': ''
+    'label_end_time': ''
+    'model_update_frequency': ''
+    'max_training_histories': ['']
+    'test_durations': ['']
+    'training_as_of_date_frequencies': ['']
+    'test_as_of_date_frequencies': ['']
+    'label_timespans': ['']
+
+# query for cohort
+cohort_config:
+    query: ''
+    name: 'active_bills'
+
+# ACLU issue area being classified
+issue_area: 'voting_rights'
+
+# Steps for text preprocessing, in the order required
+text_preprocessing:
+    - step1
+    - step2
+
+# Feature definiitions, 
+# we can map type to a dictionary of functions in the code
+# Hyperparameters might need some figuring out
+features:
+    type: 'tf-idf'
+    hyperparameters: 
+        hp_1: 'value'
+
+
+# same grid config as triage
+grid_config:
+    'sklearn.dummy.DummyClassifier':
+        strategy: [most_frequent]
+
+    'sklearn.ensemble.RandomForestClassifier':
+        max_features: ['sqrt']
+        criterion: ['gini', 'entropy']
+        n_estimators: [10]
+        min_samples_split: [10]
+        class_weight: [~]
+        max_depth: [5]
+        n_jobs: [-1]
+
+
+
+# should we include scoring?
+
+
+

@@ -1,0 +1,20 @@
+# AL: http://www.legislature.state.al.us/aliswww/default.aspx
+term_length: 4year
+regular_session:
+    convene: 
+        first_year: First Tuesday in March
+        middle_years: First Tuesday in February
+        last_year: Second Tueday in January
+    length: 105 days
+    meetings: 30 days
+special_session:
+    length: 30 days
+    meetings: 12 days
+chambers:
+    house:
+        members: 105
+        term_legnth:
+    senate:
+        memmers: 
+        
+

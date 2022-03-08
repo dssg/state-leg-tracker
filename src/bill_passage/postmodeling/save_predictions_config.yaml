@@ -1,0 +1,17 @@
+# experiment_hash: aa36a41222408534233ebd20b7adca54
+
+project_path: s3://aclu-leg-tracker/experiment_data/bill_passage/triage/national_lt
+
+model_group_ids:
+  # - 716 # scored
+  - 751
+  - 733
+  - 731
+
+# experiments: 
+#   - 'aa36a41222408534233ebd20b7adca54'
+#   - 'c11db389a7490536504225c05359a149'
+
+# train_end_times: 
+#   range_start_date: '2018-01-01' # If only this is specified, all train_end_times on and after this date will be incuded
+  # range_end_date: '2019-01-01' # If only this is specified, all train_end_times on and before this date will be included

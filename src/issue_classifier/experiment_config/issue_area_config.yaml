@@ -1,0 +1,57 @@
+model_comment: 'm1 issue classifier'
+
+temporal_config:
+  'feature_start_time': '2010-01-01'
+  'feature_end_time': '2010-12-31'
+  'label_start_time': '2010-01-01'
+  'label_end_time': '2010-12-31'
+  'model_update_frequency': '1month'
+  'max_training_histories': ['3month']
+  'test_durations': ['1month']
+  'training_as_of_date_frequencies': ['1week']
+  'test_as_of_date_frequencies': ['1week']
+  'label_timespans': ['1week']
+
+
+# query for cohort
+cohort_config:
+  query:
+    "
+        with bills_introduced_or_engrossed as(
+          select bill_id
+          from clean.bill_progress
+          where progress_date < '{as_of_date}'
+          and event in (1,2)
+          group by bill_id
+        )
+
+        select bill_id
+        from clean.bill_docs
+        join bills_introduced_or_engrossed using(bill_id)
+        where doc_date < '{as_of_date}'
+    "
+  name: 'last_week_introduce_or_engrossed_bills'
+
+# ACLU issue area being classified
+issue_area: 'reproductive_rights'
+
+# Steps for text preprocessing, in the order required
+text_preprocessing:
+    - 'remove_numbers'
+    - 'remove_punctuation'
+    - 'remove_stop_words'
+    - 'lemmatize'
+
+# Feature definitions,
+# we can map type to a dictionary of functions in the code
+# Hyperparameters might need some figuring out
+features:
+  type: 'tf-idf'
+  hyperparameters:
+    hp_1: 'value'
+
+
+# same grid config as triage
+#grid_config:
+
+

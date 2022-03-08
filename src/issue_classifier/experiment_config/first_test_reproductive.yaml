@@ -1,0 +1,92 @@
+model_comment: 'reproductive_rights_tfidf'
+
+temporal_config:
+    'feature_start_time': '2009-01-01'
+    'feature_end_time': '2020-01-01'
+    'label_start_time': '2009-01-01'
+    'label_end_time': '2020-01-01'
+    'model_update_frequency': '1y'
+    'max_training_histories': ['2y']
+    'test_durations': ['6month']
+    'training_as_of_date_frequencies': ['1week']
+    'test_as_of_date_frequencies': ['1week']
+    'label_timespans': ['0d']
+
+# bills that had a new document last week
+cohort_config:
+    query: 
+        "
+            select	
+                bill_id
+            from clean.bill_docs
+            where doc_date < '{as_of_date}'
+            and doc_date >= '{as_of_date}'::timestamp - interval '1week'
+            group by bill_id
+        "
+    name: 'last_week_changed_bills'
+
+# TODO: Add text keys to fetch from elasticsearch
+
+# Steps for text preprocessing, in the order required
+preprocessing_config:
+    - 'remove_punctuation'
+    - 'remove_numbers'
+    - 'remove_stop_words'
+    - 'lemmatize'
+
+# Configuration for elastic search 
+# Query size affects the memory requirement during retrieving text
+# text field: which field in the "bill_text" to use for modeling.
+# TODO: To fetch several fields. e.g. description, title, and doc
+es_config:
+    query_size: 10
+    text_field: 'description'
+
+# Feature definiitions, 
+# we can map type to a dictionary of functions in the code
+# Hyperparameters might need some figuring out
+features:
+    type: 'tf-idf'
+    hyperparameters: 
+        min_df: 0.01
+        # max_df: 0.95
+        # max_features: 100
+
+# ACLU issue area being classified
+issue_areas: 
+    - 'reproductive_rights'
+
+
+# same grid config as triage
+grid_config:
+    'sklearn.dummy.DummyClassifier':
+        strategy: [most_frequent]
+
+    'sklearn.ensemble.RandomForestClassifier':
+        max_features: ['sqrt']
+        criterion: ['entropy']
+        n_estimators: [10, 100, 500, 1000]
+        min_samples_split: [10, 25, 50]
+        class_weight: [~]
+        max_depth: [5, 25, 100]
+        n_jobs: [-1]
+
+scoring:
+    testing_metric_groups:
+        -
+            metrics: [precision@, recall@]
+            thresholds:
+                percentiles: [1, 2]
+        -
+            metrics: [roc_auc]
+
+    
+    training_metric_groups:
+        -
+            metrics: [recall@]
+            thresholds:
+                percentiles: [1, 2]    
+        
+
+
+

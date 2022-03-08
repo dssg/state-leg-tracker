@@ -1,0 +1,81 @@
+model_comment: 'full bill text models for predict forward test'
+
+temporal_config:
+    'feature_start_time': '2011-01-01'
+    'feature_end_time': '2020-01-01'
+    'label_start_time': '2011-01-01'
+    'label_end_time': '2020-01-01'
+    'model_update_frequency': '6month'
+    'max_training_histories': ['2y']
+    'test_durations': ['6month']
+    'training_as_of_date_frequencies': ['1week']
+    'test_as_of_date_frequencies': ['1week']
+    'label_timespans': ['0d']
+
+# smaller config for testing
+# temporal_config:
+#     'feature_start_time': '2015-01-01'
+#     'feature_end_time': '2020-06-01'
+#     'label_start_time': '2015-01-01'
+#     'label_end_time': '2020-06-01'
+#     'model_update_frequency': '5y'
+#     'max_training_histories': ['1month']
+#     'test_durations': ['1month']
+#     'training_as_of_date_frequencies': ['1week']
+#     'test_as_of_date_frequencies': ['1week']
+#     'label_timespans': ['0d']  
+
+# bills that had a new document last week
+cohort_config:
+    query: 
+        "
+            select	
+                bill_id
+            from clean.bill_docs
+            where doc_date < '{as_of_date}'
+            and doc_date >= '{as_of_date}'::timestamp - interval '1week'
+            group by bill_id
+        "
+    name: 'last_week_changed_bills'
+
+# Steps for text preprocessing, in the order required
+preprocessing_config:
+  - 'remove_punctuation'
+  - 'remove_numbers'
+  - 'remove_stop_words'
+  - 'lemmatize'
+  - 'stem'
+
+# Feature definiitions, 
+# we can map type to a dictionary of functions in the code
+# Hyperparameters might need some figuring out
+features:
+  type: 'tf-idf'
+  hyperparameters: 
+      max_df: 0.95
+      min_df: 0.01
+      ngram_range: [1, 2]
+
+# ACLU issue area being classified
+issue_areas: 
+  - 'immigrant_rights'
+  - 'reproductive_rights'
+
+# Elasticsearch configuration
+# text_field: Which text field we want to use for modeling (title, description, or doc). 
+# TODO: Make it a list so we could combine
+es_config:
+  query_size: 10
+  text_field: 'doc'
+
+# same grid config as triage
+grid_config:
+    'sklearn.ensemble.RandomForestClassifier':
+        max_features: ['sqrt']
+        criterion: ['gini']
+        n_estimators: [1000]
+        min_samples_split: [25]
+        class_weight: [~]
+        max_depth: [100]
+        n_jobs: [-1]
+

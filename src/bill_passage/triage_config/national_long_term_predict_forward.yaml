@@ -1,0 +1,638 @@
+# All the cohort, label, and feature names in this config has a '_pf' suffix to avoid clashing with other experiments that might be happening in parallel
+# We run predict forward trials with replace=True
+
+config_version: 'v7'
+# this is important to keep consistent as we would be using this to filter experiment hashes for pred forward runs
+model_comment: 'predict_forward_lt' 
+random_seed: 2383213
+
+
+# update
+temporal_config:
+    'feature_start_time': '2011-01-01'
+    'feature_end_time': '2020-01-01' 
+    'label_start_time': '2011-01-01'
+    'label_end_time': '2020-01-01'
+    'model_update_frequency': '4y' # to ensure we only get one as of date
+    'max_training_histories': ['2y']
+    'test_durations': ['0d']
+    'training_as_of_date_frequencies': ['2week'] 
+    'test_as_of_date_frequencies': ['1week'] # N/A as test duration is 0d
+    'label_timespans': ['1y']
+
+
+# Cohort: The active bills in the sessions as of today
+cohort_config:
+    query:
+        "
+            with all_active_bills as (
+                select 
+                    bill_id
+                from clean.bills a
+                    join clean.sessions b using (session_id)
+                        join pre_triage_features.ajusted_session_dates c using (session_id)
+                            left join clean.bill_progress d using (bill_id)
+                where 
+                    extract(year from date '{as_of_date}')::int in (b.year_start, b.year_end) 
+                    and 
+                    extract (year from introduced_date)::int in (b.year_start, b.year_end)
+                    and
+                    introduced_date < '{as_of_date}'
+                    and
+                    not b.special	 
+                    and 
+                    (adjourn_date > '{as_of_date}' or adjourn_date is null)
+                    and
+                    convene_date < '{as_of_date}'
+                    and 
+                    progress_date < '{as_of_date}'
+                group by bill_id
+                having
+                    max(case when event in (4, 5, 6) then progress_date end) is null
+            )
+            select
+                bill_id as entity_id
+            from all_active_bills left join clean.bill_events using (bill_id)
+            where event_date < '{as_of_date}'
+            group by bill_id
+            having 
+                min(('{as_of_date}'::DATE - event_date::DATE)::int) < 60
+        "
+    name: 'active_60d_pf'
+
+
+# Including the cohort query in here to make the labels table small
+# NOTE -- 
+#    There are some bills with several concluding events (failed, and then passes). 
+#    In this definition, we use the first "pass" event as the passed date (so if the bill has any pass date, it is considered as passed)
+label_config:
+    query: |
+        with cohort as (
+            with all_active_bills as (
+                select 
+                    bill_id
+                from clean.bills a
+                    join clean.sessions b using (session_id)
+                        join pre_triage_features.ajusted_session_dates c using (session_id)
+                            left join clean.bill_progress d using (bill_id)
+                where 
+                    extract(year from date '{as_of_date}')::int in (b.year_start, b.year_end) 
+                    and 
+                    extract (year from introduced_date)::int in (b.year_start, b.year_end)
+                    and
+                    introduced_date < '{as_of_date}'
+                    and
+                    not b.special	 
+                    and 
+                    (adjourn_date > '{as_of_date}' or adjourn_date is null)
+                    and
+                    convene_date < '{as_of_date}'
+                    and 
+                    progress_date < '{as_of_date}'
+                group by bill_id
+                having
+                    max(case when event in (4, 5, 6) then progress_date end) is null
+            )
+            select
+                bill_id
+            from all_active_bills left join clean.bill_events using (bill_id)
+            where 
+                event_date < '{as_of_date}'
+            group by bill_id
+            having 
+                min(('{as_of_date}'::DATE - event_date::DATE)::int) < 60
+        )
+        select 
+            bill_id as entity_id,
+            (CASE WHEN passed_date  < '{as_of_date}'::timestamp + interval '{label_timespan}' THEN TRUE ELSE FALSE END)::integer AS outcome
+        from cohort left join (
+            select 
+                bill_id, 
+                min(CASE WHEN event = 4 THEN progress_date ELSE null END) AS passed_date
+            from clean.bill_progress
+            group by 1	
+        ) as t using(bill_id)
+    
+    name: 'lt_passed_pf'
+
+    include_missing_labels_in_train_as: False
+
+
+# Feature engineering
+feature_aggregations:
+    - # static features about the bill introduction
+        prefix: 'bl_pf'
+        from_obj: |
+            (select 
+                bill_id as entity_id,
+                bill_type, 
+                introduced_body,
+                introduced_date,
+                state
+            from clean.bills 
+            ) AS billinfo
+
+        knowledge_date_column: 'introduced_date'
+        categoricals_imputation:
+            all:
+                type: 'null_category'
+        categoricals:
+            - # the type of the bill
+                column: bill_type
+                choice_query: 'SELECT DISTINCT bill_type FROM clean.bills'
+                metrics:
+                    - 'max'
+            - # The chamber the body was introduced in
+                column: introduced_body
+                choice_query: 'SELECT DISTINCT introduced_body FROM clean.bills'
+                metrics:
+                    - 'max'
+            - # state legislature the bill belongs to
+                column: state
+                choice_query: 'SELECT DISTINCT state_abbreviation FROM catalogs.states'
+                metrics:
+                    - 'max'
+        
+        aggregates_imputation:
+            all:
+                type: 'constant'
+                value: 0
+        aggregates:
+            - # the age of the bill ( how many days since the bill was introduced)
+                quantity: 
+                    bill_age: ('{collate_date}'::date - introduced_date)::int 
+                metrics:
+                    - max
+                    
+        intervals: ['all']
+        
+        groups:
+            - 'entity_id'
+
+    - # bill sponsors. The chambers are named lc -- lower chamber, uc-- upper chamber, and jc -- joint conference
+        # In our models, a jc is considered to be a uc
+        # TODO: track sponsor changes over time and keep track
+        prefix: 'sp_pf'
+        from_obj: |
+            (with party_sponsors as (
+                select
+                    bill_id,
+                    MAX(session_id) as session_id,
+                    MAX(introduced_date) as introduced_date,
+                    CASE WHEN COUNT(distinct sponsor_id) !=0 THEN COUNT(distinct sponsor_id) ELSE null END AS total_sponsors,  
+                    SUM(CASE WHEN party_id=1 THEN 1 ELSE 0 END) as dems,
+                    SUM(CASE WHEN party_id=2 THEN 1 ELSE 0 END) as reps,
+                    SUM(CASE WHEN party_id not in (1, 2) THEN 1 ELSE 0 end) AS other
+                from clean.bills left join clean.bill_sponsors using(bill_id)
+                group by bill_id
+            )
+            select 
+                bill_id as entity_id,
+                introduced_date,
+                session_id,
+                chamber_id,
+                chamber_size,
+                controlling_party_id,
+                total_sponsors,
+                dems::float/total_sponsors as dems_frac,
+                reps::float/total_sponsors as reps_frac,
+                other::float/total_sponsors as other_frac
+            from party_sponsors left join pre_triage_features.session_chamber_control_party using(session_id) 
+            ) AS sponsorinfo
+
+        knowledge_date_column: 'introduced_date'
+        aggregates_imputation:
+            all:
+                type: 'mean'
+        aggregates:
+            - # total sponsors
+                quantity: 'total_sponsors'
+                metrics:
+                    - max
+            - # number of sponsors as a fraction of lower chamber
+                quantity: 
+                    sponsors_frac_lc: CASE WHEN chamber_id=1 THEN total_sponsors/chamber_size ELSE 0 END
+                metrics:
+                    - max
+            - # number of sponsors as a fraction of the upper chamber
+                quantity:
+                    sponsors_frac_uc: CASE WHEN chamber_id in (2, 3) THEN total_sponsors/chamber_size ELSE 0 END
+                metrics:
+                    - max
+            - # fraction of democrats
+                quantity: 'dems_frac'
+                metrics:
+                    - max
+            - # fraction of republicans
+                quantity: 'reps_frac'
+                metrics:
+                    - max
+            - # fraction of other parties
+                quantity: 'other_frac'
+                metrics:
+                    - max
+            - # Fraction of sponsors that are from the party that controlls the Lower chamber (LC)
+                quantity: 
+                    lc_ctrl_prty_frac: | 
+                        CASE 
+                            WHEN chamber_id=1 and controlling_party_id=1 THEN dems_frac
+                            WHEN chamber_id=1 and controlling_party_id=2 THEN reps_frac
+                            WHEN chamber_id=1 and controlling_party_id not in (1, 2) THEN other_frac
+                        END
+                metrics:
+                    - max
+            - # Fraction of sponsors that are from the party that controlls the Upper chamber (or the Joint Conference)
+                quantity: 
+                    uc_ctrl_prty_frac: |
+                        CASE 
+                            WHEN chamber_id in (2,3) and controlling_party_id=1 THEN dems_frac
+                            WHEN chamber_id in (2,3) and controlling_party_id=2 THEN reps_frac
+                            WHEN chamber_id in (2,3) and controlling_party_id not in (1, 2) THEN other_frac
+                        END
+                metrics:
+                    - max
+
+        intervals: ['all']
+        groups:
+            - 'entity_id'
+
+    - # success rate of a sponsors
+        # This table is pre-calculated. Currently the success rates are calculated at each introduction time
+        # Maybe we can join this with the sponsors feature group above
+        prefix: 'sp_succ_pf'
+        from_obj: |
+            (SELECT
+                bill_id as entity_id,
+                sponsor_id,
+                knowledge_date,
+                num_bills_sponsored,
+                success_rate
+            FROM pre_triage_features.bill_sponsor_success
+            ) AS successrates
+
+        knowledge_date_column: knowledge_date
+        
+        aggregates_imputation:
+            all:
+                type: 'mean'
+        aggregates:
+            - # num bills sponsored distribution across sponsors, speaks to how active the sponsors are
+                quantity: 'num_bills_sponsored'
+                metrics:
+                    - min
+                    - max
+                    - avg
+
+            - # success rate distribution
+                quantity: 'success_rate'
+                metrics: 
+                    - max
+                    - min
+                    - avg
+        intervals: ['all']
+        groups: 
+            - 'entity_id'            
+        
+    - # legislature make up
+        prefix: 'chmbr_pf'
+        from_obj: |
+            (with chambers as (
+                select 
+                    session_id,
+                    nullif(sum(case when role_id in (2,3) then 1 else 0 end),0) as uc_size,
+                    sum(case when role_id in (2,3) and party_id=1 then 1 else 0 end) as uc_dems,
+                    sum(case when role_id in (2,3) and party_id=2 then 1 else 0 end) as uc_reps,
+                    sum(case when role_id in (2,3) and party_id not in (1,2) then 1 else 0 end) as uc_other,
+                    nullif(SUM(CASE when role_id=1 then 1 else 0 end), 0) as lc_size,
+                    sum(case when role_id=1 and party_id=1 then 1 else 0 end) as lc_dems,
+                    sum(case when role_id=1 and party_id=2 then 1 else 0 end) as lc_reps,
+                    sum(case when role_id=1 and party_id not in (1,2) then 1 else 0 end) as lc_other
+                from clean.session_people
+                group by session_id
+            )
+            select
+                bill_id as entity_id,
+                session_id,
+                introduced_date,
+                uc_size,
+                lc_size,
+                uc_dems::float / uc_size as uc_dems_frac,
+                uc_reps::float / uc_size as uc_reps_frac,
+                uc_other::float / uc_size as uc_other_frac,
+                lc_dems::float / lc_size as lc_dems_frac,
+                lc_reps::float / lc_size as lc_reps_frac,
+                lc_other::float / lc_size as lc_other_frac
+            from clean.bills left join chambers using(session_id)            
+            ) AS chamber_makeup
+
+        knowledge_date_column: 'introduced_date'
+
+        aggregates_imputation:
+            all:
+                type: 'mean' 
+        aggregates:
+            - # Number of members in the upper chamber / joint conference
+                quantity: 'uc_size'
+                metrics:
+                    - 'max'
+            - # Democratic control in the upper chamber / joint conference
+                quantity: 'uc_dems_frac'
+                metrics:
+                    - 'max'
+            - # Republican control in the upper chamber / joint conference
+                quantity: 'uc_reps_frac'
+                metrics:
+                    - 'max'
+            - # other parties' control in the upper chamber / joint conference
+                quantity: 'uc_other_frac'
+                metrics:
+                    - 'max'
+            - # Number of members in the lower chamber (house)
+                quantity: 'lc_size'
+                metrics:
+                    - 'max'
+            - # Dem control in lower chamber (house)
+                quantity: 'lc_dems_frac'
+                metrics:
+                    - 'max'
+            - # Republican control in the lower chamber (house)
+                quantity: 'lc_reps_frac'
+                metrics: 
+                    - 'max'
+            - # other parties' control in the lower chamber (house)
+                quantity: 'lc_other_frac'
+                metrics:
+                    - 'max'
+        
+        intervals: ['all']
+        groups:
+            - 'entity_id'
+
+    - # bill event counts
+        prefix: 'evntcts_pf'
+        from_obj: |
+            (
+                select 
+                    bill_id as entity_id,
+                    event_date,
+                    action,
+                    chamber,
+                    important
+                from clean.bill_events
+            ) as events 
+        
+        knowledge_date_column: 'event_date'
+
+        aggregates_imputation:
+            all:
+                type: 'constant'
+                value: 0
+
+        aggregates:
+            - # number of different events in the bill
+                quantity: action
+                metrics:
+                    - count
+            - # number of important events
+                quantity: important
+                metrics:
+                    - sum
+            - # number of chambers the bill has been to
+                quantity: DISTINCT chamber
+                metrics:
+                    - count
+        
+        intervals: ['all', '1week', '2week', '1month']
+        groups:
+            - 'entity_id'
+
+    - # recent events
+        prefix: 'recevnts_pf'
+        from_obj: |
+            (
+                select 
+                    bill_id as entity_id,
+                    event_date,
+                    important
+                from clean.bill_events
+            ) as events 
+        knowledge_date_column: 'event_date'
+
+        aggregates_imputation:
+            all:
+                type: 'constant'
+                value: 0
+        aggregates:
+            - # days since the last event
+                quantity:
+                    days_since_evnt: ('{collate_date}'::DATE - event_date::DATE)
+                metrics:
+                    - min
+            - # days since last important event
+                quantity:
+                    days_since_imp_evnt: CASE WHEN important=1 THEN ('{collate_date}'::DATE - event_date::DATE) END
+                metrics:
+                    - min
+        intervals: ['all']
+        groups:
+            - 'entity_id'
+
+    - # session information
+        prefix: 'sess_pf'
+        from_obj: |
+            (
+                select 
+                    bill_id as entity_id,
+                    min(introduced_date) as introduced_date,
+                    min(year_start) as year_start,
+                    max(year_end) as year_end,
+                    min(convene_date) as convene_date,
+                    max(adjourn_date) as adjourn_date
+                from clean.bills join pre_triage_features.ajusted_session_dates using(session_id)
+                group by bill_id
+            ) as session_info 
+        
+        knowledge_date_column: 'introduced_date'
+        aggregates_imputation:
+            all:
+                type: 'constant'
+                value: 0        
+        aggregates:
+            - # Session length--It can be the same value for all years?
+                quantity: 
+                    session_len: (adjourn_date::DATE - convene_date::DATE)
+                metrics:
+                    - min
+            - # How many days left in the session
+                quantity:
+                    remaining_time: ('{collate_date}'::DATE - convene_date::DATE)::float / (adjourn_date::DATE - convene_date::DATE)
+                metrics:
+                    - min
+        intervals: ['all']
+        groups:
+            - 'entity_id'
+
+    - # text information. 
+    # TODO: proper imputation of the document date   
+        prefix: 'txt_pf'
+        from_obj: |
+            (
+                select 
+                    bill_id as entity_id,
+                    doc_id,
+                    doc_type,
+                    doc_date,
+                    text_size                    
+                from clean.bill_docs
+                group by 1, 2, 3, 4, 5
+            ) as session_info 
+        
+        knowledge_date_column: 'doc_date'
+        aggregates_imputation:
+            all:
+                type: 'constant'
+                value: 0
+        aggregates:
+            - # number of text versions in the bil
+                quantity: doc_id
+                metrics:
+                    - count
+
+            - # number of amended versions
+                quantity:
+                    num_amended_texts: CASE WHEN doc_type ='Amended' THEN 1 ELSE 0 END
+                metrics:
+                    - sum
+                imputation:
+                    all:
+                        type: 'zero_noflag'
+
+            - # bill sizes
+                quantity: text_size
+                metrics:
+                    - max
+                    - min
+                imputation:
+                    all:
+                        type: 'mean'
+        intervals: ['all', '1week', '2week', '1month']
+        groups:
+            - 'entity_id'
+
+    - # most recent changes
+        prefix: 'rectxt_pf'
+        from_obj: |
+            (
+                select 
+                    bill_id as entity_id,
+                    doc_id,
+                    doc_type,
+                    doc_date,
+                    text_size                    
+                from clean.bill_docs
+                group by 1, 2, 3, 4, 5
+            ) as session_info 
+        
+        knowledge_date_column: 'doc_date'
+        aggregates_imputation:
+            all:
+                type: 'constant'
+                value: 0
+        aggregates:
+            - # days since last version
+                quantity: 
+                    days_since_last_version: ('{collate_date}'::DATE - doc_date::DATE)
+                metrics:
+                    - min
+
+            - # days since the last amendment
+                quantity:
+                    days_since_amendment: CASE WHEN doc_type ='Amended' THEN '{collate_date}'::DATE - doc_date::DATE ELSE NULL END
+                metrics:
+                    - min
+        intervals: ['all']
+        groups:
+            - 'entity_id'
+
+
+# Feaure Grouping
+feature_group_definition: 
+    prefix: [
+        'bl_pf', 
+        'sp_pf', 
+        'sp_succ_pf',
+        'chmbr_pf', 
+        'evntcts_pf', 
+        'recevnts_pf', 
+        'sess_pf', 
+        'txt_pf',
+        'rectxt_pf'
+    ]
+  
+feature_group_strategies: ['all']
+
+grid_config:
+    'sklearn.ensemble.RandomForestClassifier':
+        max_features: ['sqrt']
+        criterion: ['gini']
+        n_estimators: [2000]
+        min_samples_split: [10]
+        class_weight: [~]
+        max_depth: [50]
+        n_jobs: [-1]
+
+    # 'sklearn.dummy.DummyClassifier':
+    #     strategy: ['prior']
+    
+    # 'sklearn.tree.DecisionTreeClassifier':
+    #     max_depth: [2, 3, 5, 10, 20, 50, 100]
+    #     min_samples_split: [2,5,10,100]
+    #     criterion: ['gini']
+
+    # 'triage.component.catwalk.estimators.classifiers.ScaledLogisticRegression':
+    #     C: [0.001, 0.01, 0.1, 1.0, 10]
+    #     penalty: ['l1', 'l2']
+
+    # 'sklearn.ensemble.RandomForestClassifier':
+    #     max_features: ['sqrt']
+    #     criterion: ['gini']
+    #     n_estimators: [10, 25, 50, 100, 1000, 2000]
+    #     min_samples_split: [10, 50, 100]
+    #     class_weight: [~]
+    #     max_depth: [2, 5, 10, 15, 25, 50, 100]
+    #     n_jobs: [25]
+
+    # 'sklearn.ensemble.AdaBoostClassifier':
+    #     n_estimators: [500, 1000]
+
+    # 'triage.component.catwalk.baselines.rankers.PercentileRankOneFeature':
+    #     feature: [
+    #         sp_success_entity_id_all_success_rate_max,
+    #         sp_success_entity_id_all_success_rate_avg
+    #     ]
+    #     descend: [False]
+
+# scoring:
+#     testing_metric_groups:
+#         -
+#             metrics: [precision@, recall@]
+#             thresholds:
+#                 percentiles: [1, 2, 3, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 90, 100]
+#                 top_n: [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
+#         -
+#             metrics: [roc_auc]
+
+    
+#     training_metric_groups:
+#         -
+#             metrics: [precision@, recall@]
+#             thresholds:
+#                 percentiles: [1, 2, 3, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 90, 100]    
+#                 top_n: [50, 100, 200, 300, 500, 600, 700, 800, 900, 1000]
+#     # Subsets is added within the triage_experiment.py script
+#     # Currently using the State & Bill Type
+
+individual_importance:
+    methods: [] # empty list means don't calculate individual importances
+    n_ranks: 1  
+

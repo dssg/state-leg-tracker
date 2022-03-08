@@ -1,0 +1,330 @@
+cohort_config:
+  name: active_60d_pf
+  query: ' with all_active_bills as ( select bill_id from clean_2.bills a join clean_2.sessions
+    b using (session_id) join clean_2.ncsl_legiscan_linked c using (session_id) left
+    join clean_2.bill_progress d using (bill_id) where extract(year from date ''{as_of_date}'')::int
+    in (b.year_start, b.year_end) and extract (year from introduced_date)::int in
+    (b.year_start, b.year_end) and introduced_date < ''{as_of_date}'' and not b.special
+    and (adjourn_date > ''{as_of_date}'' or adjourn_date is null) and convene_date
+    < ''{as_of_date}'' and progress_date < ''{as_of_date}'' group by bill_id having
+    max(case when event in (4, 5, 6) then progress_date end) is null ) select bill_id
+    as entity_id from all_active_bills left join clean_2.bill_events using (bill_id)
+    where event_date < ''{as_of_date}'' group by bill_id having min((''{as_of_date}''::DATE
+    - event_date::DATE)::int) < 60 '
+config_version: v7
+feature_aggregations:
+- aggregates:
+  - metrics:
+    - max
+    quantity:
+      bill_age: date_part('day', age('{collate_date}', introduced_date))::int
+  aggregates_imputation:
+    all:
+      type: constant
+      value: 0
+  categoricals:
+  - choice_query: SELECT DISTINCT bill_type FROM clean_2.bills
+    column: bill_type
+    metrics:
+    - max
+  - choice_query: SELECT DISTINCT introduced_body FROM clean_2.bills
+    column: introduced_body
+    metrics:
+    - max
+  - choice_query: SELECT DISTINCT state_abbreviation FROM catalogs.states
+    column: state
+    metrics:
+    - max
+  categoricals_imputation:
+    all:
+      type: null_category
+  from_obj: "(select \n    bill_id as entity_id,\n    bill_type, \n    introduced_body,\n\
+    \    introduced_date,\n    state\nfrom clean_2.bills\n) AS billinfo\n"
+  groups:
+  - entity_id
+  intervals:
+  - all
+  knowledge_date_column: introduced_date
+  prefix: billinfo_pf
+- aggregates:
+  - metrics:
+    - max
+    quantity: total_sponsors
+  - metrics:
+    - max
+    quantity: dems_frac
+  - metrics:
+    - max
+    quantity: reps_frac
+  - metrics:
+    - max
+    quantity: other_frac
+  aggregates_imputation:
+    all:
+      type: mean
+  from_obj: "(select\n    bill_id as entity_id,\n    max(introduced_date) as introduced_date,\n\
+    \    count(distinct sponsor_id) as total_sponsors, \n    CASE WHEN \n        count(distinct\
+    \ sponsor_id)=0 then 0\n    ELSE sum(case when party_id=1 then 1 else 0 end)::float/count(distinct\
+    \ sponsor_id)\n    END AS dems_frac,\n    CASE WHEN \n        count(distinct sponsor_id)=0\
+    \ then 0\n    ELSE sum(case when party_id=2 then 1 else 0 end)::float/count(distinct\
+    \ sponsor_id)\n    END AS reps_frac,\n    CASE WHEN \n        count(distinct sponsor_id)=0\
+    \ then 0\n    ELSE sum(case when (party_id!=1 and party_id!=2) then 1 else 0 end)::float/count(distinct\
+    \ sponsor_id)\n    END AS other_frac\nfrom clean_2.bills left join clean_2.bill_sponsors\
+    \ using(bill_id)\ngroup by bill_id\n) AS sponsorinfo\n"
+  groups:
+  - entity_id
+  intervals:
+  - all
+  knowledge_date_column: introduced_date
+  prefix: sponsors_pf
+- aggregates:
+  - metrics:
+    - max
+    quantity: sen_size
+  - metrics:
+    - max
+    quantity: d_sen_ctrl
+  - metrics:
+    - max
+    quantity: r_sen_ctrl
+  - metrics:
+    - max
+    quantity: othr_sen_ctrl
+  - metrics:
+    - max
+    quantity: hou_size
+  - metrics:
+    - max
+    quantity: d_hou_ctrl
+  - metrics:
+    - max
+    quantity: r_hou_ctrl
+  - metrics:
+    - max
+    quantity: othr_hou_ctrl
+  aggregates_imputation:
+    all:
+      type: mean
+  from_obj: "(with chambers as (\n    select \n        session_id,\n        sum(case\
+    \ when role_id=1 then 1 else 0 end) as hou_size,\n        sum(case when role_id=2\
+    \ then 1 else 0 end)as sen_size,\n        sum(case when (role_id=2 and party_id=1)\
+    \ then 1 else 0 end)::float/nullif(sum(case when role_id=2 then 1 else 0 end),\
+    \ 0) as d_sen_ctrl,\n        sum(case when (role_id=2 and party_id=2) then 1 else\
+    \ 0 end)::float/nullif(sum(case when role_id=2 then 1 else 0 end), 0) as r_sen_ctrl,\n\
+    \        sum(case when (role_id=2 and (party_id!=2 and party_id!=1)) then 1 else\
+    \ 0 end)::float/nullif(sum(case when role_id=2 then 1 else 0 end),0) as othr_sen_ctrl,\n\
+    \        sum(case when (role_id=1 and party_id=1) then 1 else 0 end)::float/nullif(sum(case\
+    \ when role_id=1 then 1 else 0 end), 0) as d_hou_ctrl,\n        sum(case when\
+    \ (role_id=1 and party_id=2) then 1 else 0 end)::float/nullif(sum(case when role_id=1\
+    \ then 1 else 0 end),0) as r_hou_ctrl,\n        sum(case when (role_id=1 and (party_id!=2\
+    \ and party_id!=1)) then 1 else 0 end)::float/nullif(sum(case when role_id=1 then\
+    \ 1 else 0 end), 0) as othr_hou_ctrl\n    from clean_2.session_people\n    group\
+    \ by session_id\n)\nselect\n    bill_id as entity_id,\n    session_id,\n    introduced_date,\n\
+    \    sen_size,\n    hou_size,\n    d_sen_ctrl,\n    r_sen_ctrl,\n    othr_sen_ctrl,\n\
+    \    d_hou_ctrl,\n    r_hou_ctrl,\n    othr_hou_ctrl\nfrom clean_2.bills left\
+    \ join chambers using(session_id)            \n) AS chamber_makeup\n"
+  groups:
+  - entity_id
+  intervals:
+  - all
+  knowledge_date_column: introduced_date
+  prefix: chamber_makeup_pf
+- aggregates:
+  - metrics:
+    - count
+    quantity: action
+  - metrics:
+    - sum
+    quantity: important
+  - metrics:
+    - count
+    quantity: DISTINCT chamber
+  aggregates_imputation:
+    all:
+      type: constant
+      value: 0
+  from_obj: "(\n    select \n        bill_id as entity_id,\n        event_date,\n\
+    \        action,\n        chamber,\n        important\n    from clean_2.bill_events\n\
+    ) as events \n"
+  groups:
+  - entity_id
+  intervals:
+  - all
+  - 1week
+  - 2week
+  - 1month
+  knowledge_date_column: event_date
+  prefix: event_counts_pf
+- aggregates:
+  - metrics:
+    - min
+    quantity:
+      days_since_evnt: ('{collate_date}'::DATE - event_date::DATE)
+  - metrics:
+    - min
+    quantity:
+      days_since_imp_evnt: CASE WHEN important=1 THEN ('{collate_date}'::DATE - event_date::DATE)
+        END
+  aggregates_imputation:
+    all:
+      type: constant
+      value: 0
+  from_obj: "(\n    select \n        bill_id as entity_id,\n        event_date,\n\
+    \        important\n    from clean_2.bill_events\n) as events \n"
+  groups:
+  - entity_id
+  intervals:
+  - all
+  knowledge_date_column: event_date
+  prefix: rec_evnts_pf
+- aggregates:
+  - metrics:
+    - min
+    quantity:
+      session_len: (adjourn_date::DATE - convene_date::DATE)
+  - metrics:
+    - min
+    quantity:
+      remaining_time: ('{collate_date}'::DATE - convene_date::DATE)::float / (adjourn_date::DATE
+        - convene_date::DATE)
+  aggregates_imputation:
+    all:
+      type: constant
+      value: 0
+  from_obj: "(\n    select \n        bill_id as entity_id,\n        min(introduced_date)\
+    \ as introduced_date,\n        min(year_start) as year_start,\n        max(year_end)\
+    \ as year_end,\n        min(convene_date) as convene_date,\n        max(adjourn_date)\
+    \ as adjourn_date\n    from clean_2.bills left join clean_2.ncsl_legiscan_linked\
+    \ using(session_id)\n    group by bill_id\n) as session_info \n"
+  groups:
+  - entity_id
+  intervals:
+  - all
+  knowledge_date_column: introduced_date
+  prefix: session_info_pf
+- aggregates:
+  - metrics:
+    - count
+    quantity: doc_id
+  - imputation:
+      all:
+        type: zero_noflag
+    metrics:
+    - sum
+    quantity:
+      num_amended_texts: CASE WHEN doc_type ='Amended' THEN 1 ELSE 0 END
+  - imputation:
+      all:
+        type: mean
+    metrics:
+    - max
+    - min
+    quantity: text_size
+  aggregates_imputation:
+    all:
+      type: constant
+      value: 0
+  from_obj: "(\n    select \n        bill_id as entity_id,\n        doc_id,\n    \
+    \    doc_type,\n        doc_date,\n        text_size                    \n   \
+    \ from clean_2.bill_docs\n    group by 1, 2, 3, 4, 5\n) as session_info \n"
+  groups:
+  - entity_id
+  intervals:
+  - all
+  - 1week
+  - 2week
+  - 1month
+  knowledge_date_column: doc_date
+  prefix: txt_pf
+- aggregates:
+  - metrics:
+    - min
+    quantity:
+      days_since_last_version: ('{collate_date}'::DATE - doc_date::DATE)
+  - metrics:
+    - min
+    quantity:
+      days_since_amendment: CASE WHEN doc_type ='Amended' THEN '{collate_date}'::DATE
+        - doc_date::DATE ELSE NULL END
+  aggregates_imputation:
+    all:
+      type: constant
+      value: 0
+  from_obj: "(\n    select \n        bill_id as entity_id,\n        doc_id,\n    \
+    \    doc_type,\n        doc_date,\n        text_size                    \n   \
+    \ from clean_2.bill_docs\n    group by 1, 2, 3, 4, 5\n) as session_info \n"
+  groups:
+  - entity_id
+  intervals:
+  - all
+  knowledge_date_column: doc_date
+  prefix: rec_txt_pf
+feature_group_definition:
+  prefix:
+  - billinfo_pf
+  - sponsors_pf
+  - chamber_makeup_pf
+  - event_counts_pf
+  - rec_evnts_pf
+  - session_info_pf
+  - txt_pf
+  - rec_txt_pf
+feature_group_strategies:
+- all
+grid_config:
+  sklearn.ensemble.RandomForestClassifier:
+    class_weight:
+    - null
+    criterion:
+    - gini
+    max_depth:
+    - 50
+    max_features:
+    - sqrt
+    min_samples_split:
+    - 10
+    n_estimators:
+    - 2000
+    n_jobs:
+    - -1
+label_config:
+  include_missing_labels_in_train_as: false
+  name: lt_passed_pf
+  query: "with cohort as (\n    with all_active_bills as (\n        select \n    \
+    \        bill_id\n        from clean_2.bills a\n            join clean_2.sessions\
+    \ b using (session_id)\n                join clean_2.ncsl_legiscan_linked c using\
+    \ (session_id)\n                    left join clean_2.bill_progress d using (bill_id)\n\
+    \        where \n            extract(year from date '{as_of_date}')::int in (b.year_start,\
+    \ b.year_end) \n            and \n            extract (year from introduced_date)::int\
+    \ in (b.year_start, b.year_end)\n            and\n            introduced_date\
+    \ < '{as_of_date}'\n            and\n            not b.special\t \n          \
+    \  and \n            (adjourn_date > '{as_of_date}' or adjourn_date is null)\n\
+    \            and\n            convene_date < '{as_of_date}'\n            and \n\
+    \            progress_date < '{as_of_date}'\n        group by bill_id\n      \
+    \  having\n            max(case when event in (4, 5, 6) then progress_date end)\
+    \ is null\n    )\n    select\n        bill_id\n    from all_active_bills left\
+    \ join clean_2.bill_events using (bill_id)\n    where \n        event_date < '{as_of_date}'\n\
+    \    group by bill_id\n    having \n        min(('{as_of_date}'::DATE - event_date::DATE)::int)\
+    \ < 60\n)\nselect \n    bill_id as entity_id,\n    (CASE WHEN passed_date  < '{as_of_date}'::timestamp\
+    \ + interval '{label_timespan}' THEN TRUE ELSE FALSE END)::integer AS outcome\n\
+    from cohort left join (\n    select \n        bill_id, \n        min(CASE WHEN\
+    \ event = 4 THEN progress_date ELSE null END) AS passed_date\n    from clean_2.bill_progress\n\
+    \    group by 1\t\n) as t using(bill_id)\n"
+model_comment: deploying_national_short_term_model
+random_seed: 2383213
+temporal_config:
+  feature_end_time: '2021-03-08'
+  feature_start_time: '2011-01-01'
+  label_end_time: '2022-03-08'
+  label_start_time: '2018-03-08'
+  label_timespans:
+  - 1y
+  max_training_histories:
+  - 2y
+  model_update_frequency: 4y
+  test_as_of_date_frequencies:
+  - 1week
+  test_durations:
+  - 0d
+  training_as_of_date_frequencies:
+  - 2week
