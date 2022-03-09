@@ -22,17 +22,23 @@
 # aws s3 mv /mnt/data/db_backups/triage_metadata_20210211.dmp s3://aclu-leg-tracker/db_backups/20210211_triage_backup/
 
 
-echo "working on the dump of train_results"
-pg_dump -h ec2-34-220-100-126.us-west-2.compute.amazonaws.com -p 5432 --role rg_staff -d aclu_leg_tracker -n train_results_20210211 > /mnt/data/db_backups/train_results_20210211.dmp
-echo "train_results dump is complete. Copying to S3"
-aws s3 mv /mnt/data/db_backups/train_results_20210211.dmp s3://aclu-leg-tracker/db_backups/20210211_triage_backup/
-
+# echo "working on the dump of train_results"
+# pg_dump -h ec2-34-220-100-126.us-west-2.compute.amazonaws.com -p 5432 --role rg_staff -d aclu_leg_tracker -n train_results_20210211 > /mnt/data/db_backups/train_results_20210211.dmp
+# echo "train_results dump is complete. Copying to S3"
+# aws s3 mv /mnt/data/db_backups/train_results_20210211.dmp s3://aclu-leg-tracker/db_backups/20210211_triage_backup/
 
 # echo "working on the dump of test_results"
 # pg_dump -h ec2-34-220-100-126.us-west-2.compute.amazonaws.com -p 5432 --role rg_staff -d aclu_leg_tracker -n test_results_20210211 > /mnt/data/db_backups/test_results_20210211.dmp
 # echo "test_results dump is complete. Copying to S3"
 # aws s3 mv /mnt/data/db_backups/test_results_20210211.dmp s3://aclu-leg-tracker/db_backups/20210211_triage_backup/
 
+
+# 2022.03.08 Backing up before resizing the EC2
+echo "Working on the dump of the db..."
+pg_dump -h ec2-34-220-100-126.us-west-2.compute.amazonaws.com -p 5432 --role rg_staff -d aclu_leg_tracker -n aclu_labels -n catalogs -n clean -n deploy -n features -n labels_es -n legiscan_update_metadata -n pre_triage_features -n public -n test_results -n train_results -n triage_metadata > /mnt/data/db_backups/db_backup_20220308.dmp
+
+echo "Dump is complete. Copying to S3..."
+aws s3 mv /mnt/data/db_backups/db_backup_20220308.dmp s3://aclu-leg-tracker/db_backups/20220318_full_backup/
 
 echo "operation complete"
 
