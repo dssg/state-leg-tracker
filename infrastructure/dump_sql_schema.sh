@@ -35,7 +35,7 @@
 
 # 2022.03.08 Backing up before resizing the EC2
 echo "Working on the dump of the db..."
-pg_dump -h ec2-34-220-100-126.us-west-2.compute.amazonaws.com -p 5432 --role rg_staff -d aclu_leg_tracker -n aclu_labels -n catalogs -n clean -n deploy -n features -n labels_es -n legiscan_update_metadata -n pre_triage_features -n public -n test_results -n train_results -n triage_metadata > /mnt/data/db_backups/db_backup_20220308.dmp
+pg_dump -F c -h ec2-34-220-100-126.us-west-2.compute.amazonaws.com -p 5432 --role rg_staff -d aclu_leg_tracker -n aclu_labels -n catalogs -n clean -n deploy -n features -n labels_es -n legiscan_update_metadata -n pre_triage_features -n public -n test_results -n train_results -n triage_metadata > /mnt/data/db_backups/db_backup_20220308.dmp
 
 echo "Dump is complete. Copying to S3..."
 aws s3 mv /mnt/data/db_backups/db_backup_20220308.dmp s3://aclu-leg-tracker/db_backups/20220318_full_backup/
